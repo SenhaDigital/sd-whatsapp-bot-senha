@@ -3,9 +3,29 @@ import bodyParser from 'body-parser'
 import { makeWASocket, useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys'
 import { Boom } from '@hapi/boom'
 import qrcode from 'qrcode'
+import cors from 'cors'
 
 const app = express()
 app.use(bodyParser.json())
+
+// Lista dos domínios permitidos no CORS
+const allowedOrigins = [
+    'http://localhost:8080',
+    'https://dev.senhadigitalplus.com.br',
+    'https://prod.senhadigitalplus.com.br'
+]
+
+app.use(cors({
+    origin: (origin, callback) => {
+        // Permite requisições sem "origin" (ex: Postman, curl)
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true)
+        } else {
+            callback(new Error('Origem não permitida pelo CORS'))
+        }
+    },
+    credentials: true
+}))
 
 const sessions = new Map()
 
@@ -22,7 +42,6 @@ async function startSession(sessionId) {
         printQRInTerminal: false,
     })
 
-    // Objeto da sessão armazenado já sem QR inicialmente
     const sessionData = { sock, saveCreds, latestQR: null }
     sessions.set(sessionId, sessionData)
 
@@ -61,7 +80,6 @@ app.get('/start/:sessionId', async (req, res) => {
     const sessionId = req.params.sessionId
     try {
         await startSession(sessionId)
-        // Não retorna o QR aqui pois ele pode não ter sido gerado ainda
         res.json({ message: `Sessão ${sessionId} iniciada` })
     } catch (err) {
         res.status(500).json({ error: err.message })
