@@ -1,0 +1,128 @@
+import express from 'express'
+import bodyParser from 'body-parser'
+import { makeWASocket, useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys'
+import { Boom } from '@hapi/boom'
+import qrcode from 'qrcode'
+
+const app = express()
+app.use(bodyParser.json())
+
+const sessions = new Map()
+
+async function startSession(sessionId) {
+    if (sessions.has(sessionId)) {
+        console.log(`Sessão ${sessionId} já está rodando`)
+        return sessions.get(sessionId)
+    }
+
+    const { state, saveCreds } = await useMultiFileAuthState(`auth_info/${sessionId}`)
+
+    const sock = makeWASocket({
+        auth: state,
+        printQRInTerminal: false,
+    })
+
+    // Objeto da sessão armazenado já sem QR inicialmente
+    const sessionData = { sock, saveCreds, latestQR: null }
+    sessions.set(sessionId, sessionData)
+
+    sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
+        if (qr) {
+            sessionData.latestQR = await qrcode.toDataURL(qr)
+            console.log(`QR code gerado para sessão ${sessionId}`)
+        }
+
+        if (connection === 'close') {
+            const statusCode = new Boom(lastDisconnect?.error).output.statusCode
+            console.log(`Conexão da sessão ${sessionId} fechada, código:`, statusCode)
+
+            if (statusCode !== DisconnectReason.loggedOut) {
+                console.log(`Tentando reconectar sessão ${sessionId}...`)
+                sessions.delete(sessionId)
+                await startSession(sessionId)
+            } else {
+                console.log(`Logout detectado na sessão ${sessionId}, desconectando...`)
+                sessions.delete(sessionId)
+            }
+        }
+
+        if (connection === 'open') {
+            console.log(`Sessão ${sessionId} conectada!`)
+            sessionData.latestQR = null
+        }
+    })
+
+    sock.ev.on('creds.update', saveCreds)
+
+    return sessionData
+}
+
+app.get('/start/:sessionId', async (req, res) => {
+    const sessionId = req.params.sessionId
+    try {
+        await startSession(sessionId)
+        // Não retorna o QR aqui pois ele pode não ter sido gerado ainda
+        res.json({ message: `Sessão ${sessionId} iniciada` })
+    } catch (err) {
+        res.status(500).json({ error: err.message })
+    }
+})
+
+app.get('/qrcode/:sessionId', async (req, res) => {
+    const sessionId = req.params.sessionId
+    const session = sessions.get(sessionId)
+
+    if (!session || !session.latestQR) {
+        return res.status(400).json({ error: 'QR Code ainda não gerado ou já conectado' })
+    }
+
+    res.json({ qr: session.latestQR })
+})
+
+async function sendMessageToNumber(sessionId, number, message) {
+    const session = sessions.get(sessionId)
+    if (!session) throw new Error('Sessão não conectada')
+    const jid = number + '@s.whatsapp.net'
+    await session.sock.sendMessage(jid, { text: message })
+}
+
+app.post('/send-message/:sessionId', async (req, res) => {
+    const sessionId = req.params.sessionId
+    const { number, message } = req.body
+
+    if (!number || !message) {
+        return res.status(400).json({ error: 'number e message são obrigatórios' })
+    }
+
+    try {
+        await sendMessageToNumber(sessionId, number, message)
+        res.json({ message: `Mensagem enviada para ${number} pela sessão ${sessionId}` })
+    } catch (err) {
+        res.status(500).json({ error: err.message })
+    }
+})
+
+async function disconnectSession(sessionId) {
+    const session = sessions.get(sessionId)
+    if (session) {
+        await session.sock.logout()
+        session.sock.ws.close()
+        sessions.delete(sessionId)
+    }
+}
+
+app.post('/disconnect/:sessionId', async (req, res) => {
+    const sessionId = req.params.sessionId
+
+    try {
+        await disconnectSession(sessionId)
+        res.json({ message: `Sessão ${sessionId} desconectada` })
+    } catch (err) {
+        res.status(500).json({ error: err.message })
+    }
+})
+
+const PORT = process.env.PORT || 3333
+app.listen(PORT, () => {
+    console.log(`API rodando em http://localhost:${PORT}`)
+})

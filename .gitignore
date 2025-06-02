@@ -1,0 +1,27 @@
+# Node modules
+node_modules/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables (caso use .env)
+.env
+
+# Pasta de autenticação do Baileys
+auth_info/
+
+# Arquivos temporários do sistema
+.DS_Store
+Thumbs.db
+
+# Diretórios do editor
+.vscode/
+.idea/
+
+# Output do build (se tiver)
+dist/
+build/
