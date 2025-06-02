@@ -111,6 +111,23 @@ async function disconnectSession(sessionId) {
     }
 }
 
+app.get('/status/:sessionId', (req, res) => {
+    const sessionId = req.params.sessionId
+    const session = sessions.get(sessionId)
+
+    if (!session) {
+        return res.status(404).json({ connected: false, error: 'Sessão não iniciada ou desconectada' })
+    }
+
+    const isConnected = session.latestQR === null
+
+    res.json({
+        connected: isConnected,
+        qr: session.latestQR || null,
+        sessionId
+    })
+})
+
 app.post('/disconnect/:sessionId', async (req, res) => {
     const sessionId = req.params.sessionId
 
