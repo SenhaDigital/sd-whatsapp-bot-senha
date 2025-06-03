@@ -80,7 +80,7 @@ app.get('/start/:sessionId', async (req, res) => {
     const sessionId = req.params.sessionId
     try {
         await startSession(sessionId)
-        res.json({ message: `Sessão ${sessionId} iniciada` })
+        res.json({ session: `${sessionId}` }) 
     } catch (err) {
         res.status(500).json({ error: err.message })
     }
