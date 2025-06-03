@@ -80,7 +80,7 @@ app.get('/start/:sessionId', async (req, res) => {
     const sessionId = req.params.sessionId
     try {
         await startSession(sessionId)
-        res.json({ session: `${sessionId}` }) 
+        res.json({ session: `${sessionId}` })
     } catch (err) {
         res.status(500).json({ error: err.message })
     }
@@ -154,6 +154,28 @@ app.post('/disconnect/:sessionId', async (req, res) => {
         res.json({ message: `Sessão ${sessionId} desconectada` })
     } catch (err) {
         res.status(500).json({ error: err.message })
+    }
+})
+
+async function disconnectAllSessions() {
+    for (const [sessionId, session] of sessions.entries()) {
+        try {
+            await session.sock.logout()
+            session.sock.ws.close()
+            sessions.delete(sessionId)
+            console.log(`Sessão ${sessionId} desconectada`)
+        } catch (err) {
+            console.error(`Erro ao desconectar sessão ${sessionId}:`, err.message)
+        }
+    }
+}
+
+app.post('/disconnect-all', async (req, res) => {
+    try {
+        await disconnectAllSessions()
+        res.json({ message: 'Todas as sessões foram desconectadas com sucesso' })
+    } catch (err) {
+        res.status(500).json({ error: 'Erro ao desconectar todas as sessões', details: err.message })
     }
 })
 
