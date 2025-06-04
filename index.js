@@ -8,7 +8,6 @@ import cors from 'cors'
 const app = express()
 app.use(bodyParser.json())
 
-// Lista dos domínios permitidos no CORS
 const allowedOrigins = [
     'http://localhost:8080',
     'https://dev.senhadigitalplus.com.br',
@@ -17,7 +16,6 @@ const allowedOrigins = [
 
 app.use(cors({
     origin: (origin, callback) => {
-        // Permite requisições sem "origin" (ex: Postman, curl)
         if (!origin || allowedOrigins.includes(origin)) {
             callback(null, true)
         } else {
