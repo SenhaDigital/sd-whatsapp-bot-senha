@@ -11,7 +11,7 @@ app.use(bodyParser.json())
 const allowedOrigins = [
     'http://localhost:8080',
     'https://dev.senhadigitalplus.com.br',
-    'https://prod.senhadigitalplus.com.br'
+    'https://app.senhadigitalplus.com.br'
 ]
 
 app.use(cors({
