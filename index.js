@@ -98,10 +98,50 @@ app.get('/qrcode/:sessionId', async (req, res) => {
     res.json({ qr: session.latestQR })
 })
 
-async function sendMessageToNumber(sessionId, number, message) {
+function normalizeBrazilianNumber(rawNumber) {
+    // Remove tudo que não for dígito
+    let number = rawNumber.replace(/\D/g, '')
+
+    // Remove código do país se tiver (55)
+    if (number.startsWith('55')) {
+        number = number.slice(2)
+    }
+
+    // Agora number tem só DDD + número (sem 55)
+    // Deve ter 10 ou 11 dígitos: 2 dígitos DDD + 8 ou 9 dígitos número
+
+    if (number.length < 10 || number.length > 11) {
+        throw new Error('Número inválido: deve conter DDD e número com 8 ou 9 dígitos')
+    }
+
+    const ddd = number.slice(0, 2)
+    let phoneNumber = number.slice(2)
+
+    // Remove nono dígito duplicado (se número tem 11 dígitos e o número começar com 99)
+    if (phoneNumber.length === 9) {
+        if (phoneNumber.startsWith('99')) {
+            // Remove o primeiro 9 duplicado
+            phoneNumber = phoneNumber.slice(1)
+        }
+    }
+
+    // Se telefone tem 8 dígitos (fixo), adiciona o 9 na frente (assumindo que queremos celular)
+    if (phoneNumber.length === 8) {
+        phoneNumber = '9' + phoneNumber
+    }
+
+    // Agora phoneNumber tem 9 dígitos com nono dígito correto
+
+    return '55' + ddd + phoneNumber
+}
+
+async function sendMessageToNumber(sessionId, rawNumber, message) {
     const session = sessions.get(sessionId)
     if (!session) throw new Error('Sessão não conectada')
-    const jid = number + '@s.whatsapp.net'
+
+    const normalizedNumber = normalizeBrazilianNumber(rawNumber)
+    const jid = normalizedNumber + '@s.whatsapp.net'
+
     await session.sock.sendMessage(jid, { text: message })
 }
 
