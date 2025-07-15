@@ -98,23 +98,35 @@ app.get('/qrcode/:sessionId', async (req, res) => {
     res.json({ qr: session.latestQR })
 })
 
-async function sendMessageToNumber(sessionId, number, message) {
+async function sendMessageToNumber(sessionId, number, message, imageUrl) {
     const session = sessions.get(sessionId)
     if (!session) throw new Error('Sessão não conectada')
+
     const jid = number + '@s.whatsapp.net'
-    await session.sock.sendMessage(jid, { text: message })
+
+    if (imageUrl) {
+        const response = await axios.get(imageUrl, { responseType: 'arraybuffer' })
+        const buffer = Buffer.from(response.data, 'binary')
+
+        await session.sock.sendMessage(jid, {
+            image: buffer,
+            caption: message || '' 
+        })
+    } else {
+        await session.sock.sendMessage(jid, { text: message })
+    }
 }
 
 app.post('/send-message/:sessionId', async (req, res) => {
     const sessionId = req.params.sessionId
-    const { number, message } = req.body
+    const { number, message, imageUrl } = req.body
 
-    if (!number || !message) {
-        return res.status(400).json({ error: 'number e message são obrigatórios' })
+    if (!number) {
+        return res.status(400).json({ error: 'number é obrigatório' })
     }
 
     try {
-        await sendMessageToNumber(sessionId, number, message)
+        await sendMessageToNumber(sessionId, number, message, imageUrl)
         res.json({ message: `Mensagem enviada para ${number} pela sessão ${sessionId}` })
     } catch (err) {
         res.status(500).json({ error: err.message })
