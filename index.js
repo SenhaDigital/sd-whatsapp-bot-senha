@@ -4,6 +4,7 @@ import { makeWASocket, useMultiFileAuthState, DisconnectReason } from '@whiskeys
 import { Boom } from '@hapi/boom'
 import qrcode from 'qrcode'
 import cors from 'cors'
+import axios from 'axios'
 
 const app = express()
 app.use(bodyParser.json())
