@@ -113,8 +113,10 @@ async function sendMessageToNumber(sessionId, number, message, imageUrl) {
             image: buffer,
             caption: message || '' 
         })
+        console.log(`Mensagem enviada para ${number} na sessão ${sessionId}`)
     } else {
         await session.sock.sendMessage(jid, { text: message })
+        console.log(`Mensagem enviada para ${number} na sessão ${sessionId}`)
     }
 }
 
