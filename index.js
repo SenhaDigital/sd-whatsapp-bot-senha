@@ -1,201 +1,226 @@
-import express from 'express'
-import bodyParser from 'body-parser'
-import { makeWASocket, useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys'
-import { Boom } from '@hapi/boom'
-import qrcode from 'qrcode'
-import cors from 'cors'
-import axios from 'axios'
+import express from "express";
+import bodyParser from "body-parser";
+import {
+  makeWASocket,
+  useMultiFileAuthState,
+  DisconnectReason,
+} from "@whiskeysockets/baileys";
+import { Boom } from "@hapi/boom";
+import qrcode from "qrcode";
+import cors from "cors";
+import axios from "axios";
 
-const app = express()
-app.use(bodyParser.json())
+const app = express();
+app.use(bodyParser.json());
 
 const allowedOrigins = [
-    'http://localhost:8080',
-    'http://localhost:3000',
-    'https://dev.senhadigitalplus.com.br',
-    'https://app.senhadigitalplus.com.br',
-    'https://dev.sdcrm.com.br',
-    'https://app.sdcrm.com.br',
-]
+  "http://localhost:8080",
+  "http://localhost:3000",
+  "https://dev.senhadigitalplus.com.br",
+  "https://app.senhadigitalplus.com.br",
+  "https://dev.sdcrm.com.br",
+  "https://app.sdcrm.com.br",
+];
 
-app.use(cors({
+app.use(
+  cors({
     origin: (origin, callback) => {
-        if (!origin || allowedOrigins.includes(origin)) {
-            callback(null, true)
-        } else {
-            callback(new Error('Origem não permitida pelo CORS'))
-        }
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Origem não permitida pelo CORS"));
+      }
     },
-    credentials: true
-}))
+    credentials: true,
+  })
+);
 
-const sessions = new Map()
+const sessions = new Map();
 
 async function startSession(sessionId) {
-    if (sessions.has(sessionId)) {
-        console.log(`Sessão ${sessionId} já está rodando`)
-        return sessions.get(sessionId)
+  if (sessions.has(sessionId)) {
+    console.log(`Sessão ${sessionId} já está rodando`);
+    return sessions.get(sessionId);
+  }
+
+  const { state, saveCreds } = await useMultiFileAuthState(
+    `auth_info/${sessionId}`
+  );
+
+  const sock = makeWASocket({
+    auth: state,
+    printQRInTerminal: false,
+  });
+
+  const sessionData = { sock, saveCreds, latestQR: null };
+  sessions.set(sessionId, sessionData);
+
+  sock.ev.on(
+    "connection.update",
+    async ({ connection, lastDisconnect, qr }) => {
+      if (qr) {
+        sessionData.latestQR = await qrcode.toDataURL(qr);
+        console.log(`QR code gerado para sessão ${sessionId}`);
+      }
+
+      if (connection === "close") {
+        const statusCode = new Boom(lastDisconnect?.error).output.statusCode;
+        console.log(
+          `Conexão da sessão ${sessionId} fechada, código:`,
+          statusCode
+        );
+
+        if (statusCode !== DisconnectReason.loggedOut) {
+          console.log(`Tentando reconectar sessão ${sessionId}...`);
+          sessions.delete(sessionId);
+          await startSession(sessionId);
+        } else {
+          console.log(
+            `Logout detectado na sessão ${sessionId}, desconectando...`
+          );
+          sessions.delete(sessionId);
+        }
+      }
+
+      if (connection === "open") {
+        console.log(`Sessão ${sessionId} conectada!`);
+        sessionData.latestQR = null;
+      }
     }
+  );
 
-    const { state, saveCreds } = await useMultiFileAuthState(`auth_info/${sessionId}`)
+  sock.ev.on("creds.update", saveCreds);
 
-    const sock = makeWASocket({
-        auth: state,
-        printQRInTerminal: false,
-    })
-
-    const sessionData = { sock, saveCreds, latestQR: null }
-    sessions.set(sessionId, sessionData)
-
-    sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
-        if (qr) {
-            sessionData.latestQR = await qrcode.toDataURL(qr)
-            console.log(`QR code gerado para sessão ${sessionId}`)
-        }
-
-        if (connection === 'close') {
-            const statusCode = new Boom(lastDisconnect?.error).output.statusCode
-            console.log(`Conexão da sessão ${sessionId} fechada, código:`, statusCode)
-
-            if (statusCode !== DisconnectReason.loggedOut) {
-                console.log(`Tentando reconectar sessão ${sessionId}...`)
-                sessions.delete(sessionId)
-                await startSession(sessionId)
-            } else {
-                console.log(`Logout detectado na sessão ${sessionId}, desconectando...`)
-                sessions.delete(sessionId)
-            }
-        }
-
-        if (connection === 'open') {
-            console.log(`Sessão ${sessionId} conectada!`)
-            sessionData.latestQR = null
-        }
-    })
-
-    sock.ev.on('creds.update', saveCreds)
-
-    return sessionData
+  return sessionData;
 }
 
-app.get('/start/:sessionId', async (req, res) => {
-    const sessionId = req.params.sessionId
-    try {
-        await startSession(sessionId)
-        res.json({ session: `${sessionId}` })
-    } catch (err) {
-        res.status(500).json({ error: err.message })
-    }
-})
+app.get("/start/:sessionId", async (req, res) => {
+  const sessionId = req.params.sessionId;
+  try {
+    await startSession(sessionId);
+    res.json({ session: `${sessionId}` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
-app.get('/qrcode/:sessionId', async (req, res) => {
-    const sessionId = req.params.sessionId
-    const session = sessions.get(sessionId)
+app.get("/qrcode/:sessionId", async (req, res) => {
+  const sessionId = req.params.sessionId;
+  const session = sessions.get(sessionId);
 
-    if (!session || !session.latestQR) {
-        return res.status(400).json({ error: 'QR Code ainda não gerado ou já conectado' })
-    }
+  if (!session || !session.latestQR) {
+    return res
+      .status(400)
+      .json({ error: "QR Code ainda não gerado ou já conectado" });
+  }
 
-    res.json({ qr: session.latestQR })
-})
+  res.json({ qr: session.latestQR });
+});
 
 async function sendMessageToNumber(sessionId, number, message, imageUrl) {
-    const session = sessions.get(sessionId)
-    if (!session) throw new Error('Sessão não conectada')
+  const session = sessions.get(sessionId);
+  if (!session) throw new Error("Sessão não conectada");
 
-    const jid = number + '@s.whatsapp.net'
+  const jid = number + "@s.whatsapp.net";
 
-    if (imageUrl) {
-        const response = await axios.get(imageUrl, { responseType: 'arraybuffer' })
-        const buffer = Buffer.from(response.data, 'binary')
+  if (imageUrl) {
+    const response = await axios.get(imageUrl, { responseType: "arraybuffer" });
+    const buffer = Buffer.from(response.data, "binary");
 
-        await session.sock.sendMessage(jid, {
-            image: buffer,
-            caption: message || '' 
-        })
-        console.log(`Mensagem enviada para ${number} na sessão ${sessionId}`)
-    } else {
-        await session.sock.sendMessage(jid, { text: message })
-        console.log(`Mensagem enviada para ${number} na sessão ${sessionId}`)
-    }
+    await session.sock.sendMessage(jid, {
+      image: buffer,
+      caption: message || "",
+    });
+    console.log(`Mensagem enviada para ${number} na sessão ${sessionId}`);
+  } else {
+    await session.sock.sendMessage(jid, { text: message });
+    console.log(`Mensagem enviada para ${number} na sessão ${sessionId}`);
+  }
 }
 
-app.post('/send-message/:sessionId', async (req, res) => {
-    const sessionId = req.params.sessionId
-    const { number, message, imageUrl } = req.body
+app.post("/send-message/:sessionId", async (req, res) => {
+  const sessionId = req.params.sessionId;
+  const { number, message, imageUrl } = req.body;
 
-    if (!number) {
-        return res.status(400).json({ error: 'number é obrigatório' })
-    }
+  if (!number) {
+    return res.status(400).json({ error: "number é obrigatório" });
+  }
 
-    try {
-        await sendMessageToNumber(sessionId, number, message, imageUrl)
-        res.json({ message: `Mensagem enviada para ${number} pela sessão ${sessionId}` })
-    } catch (err) {
-        res.status(500).json({ error: err.message })
-    }
-})
+  try {
+    await sendMessageToNumber(sessionId, number, message, imageUrl);
+    res.json({
+      message: `Mensagem enviada para ${number} pela sessão ${sessionId}`,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 async function disconnectSession(sessionId) {
-    const session = sessions.get(sessionId)
-    if (session) {
-        await session.sock.logout()
-        session.sock.ws.close()
-        sessions.delete(sessionId)
-    }
+  const session = sessions.get(sessionId);
+  if (session) {
+    await session.sock.logout();
+    session.sock.ws.close();
+    sessions.delete(sessionId);
+  }
 }
 
-app.get('/status/:sessionId', (req, res) => {
-    const sessionId = req.params.sessionId
-    const session = sessions.get(sessionId)
+app.get("/status/:sessionId", (req, res) => {
+  const sessionId = req.params.sessionId;
+  const session = sessions.get(sessionId);
 
-    if (!session) {
-        return res.status(404).json({ connected: false, error: 'Sessão não iniciada ou desconectada' })
-    }
+  if (!session) {
+    return res
+      .status(404)
+      .json({ connected: false, error: "Sessão não iniciada ou desconectada" });
+  }
 
-    const isConnected = session.latestQR === null
+  const isConnected = session.latestQR === null;
 
-    res.json({
-        connected: isConnected,
-        qr: session.latestQR || null,
-        sessionId
-    })
-})
+  res.json({
+    connected: isConnected,
+    qr: session.latestQR || null,
+    sessionId,
+  });
+});
 
-app.post('/disconnect/:sessionId', async (req, res) => {
-    const sessionId = req.params.sessionId
+app.post("/disconnect/:sessionId", async (req, res) => {
+  const sessionId = req.params.sessionId;
 
-    try {
-        await disconnectSession(sessionId)
-        res.json({ message: `Sessão ${sessionId} desconectada` })
-    } catch (err) {
-        res.status(500).json({ error: err.message })
-    }
-})
+  try {
+    await disconnectSession(sessionId);
+    res.json({ message: `Sessão ${sessionId} desconectada` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 async function disconnectAllSessions() {
-    for (const [sessionId, session] of sessions.entries()) {
-        try {
-            await session.sock.logout()
-            session.sock.ws.close()
-            sessions.delete(sessionId)
-            console.log(`Sessão ${sessionId} desconectada`)
-        } catch (err) {
-            console.error(`Erro ao desconectar sessão ${sessionId}:`, err.message)
-        }
+  for (const [sessionId, session] of sessions.entries()) {
+    try {
+      await session.sock.logout();
+      session.sock.ws.close();
+      sessions.delete(sessionId);
+      console.log(`Sessão ${sessionId} desconectada`);
+    } catch (err) {
+      console.error(`Erro ao desconectar sessão ${sessionId}:`, err.message);
     }
+  }
 }
 
-app.post('/disconnect-all', async (req, res) => {
-    try {
-        await disconnectAllSessions()
-        res.json({ message: 'Todas as sessões foram desconectadas com sucesso' })
-    } catch (err) {
-        res.status(500).json({ error: 'Erro ao desconectar todas as sessões', details: err.message })
-    }
-})
+app.post("/disconnect-all", async (req, res) => {
+  try {
+    await disconnectAllSessions();
+    res.json({ message: "Todas as sessões foram desconectadas com sucesso" });
+  } catch (err) {
+    res.status(500).json({
+      error: "Erro ao desconectar todas as sessões",
+      details: err.message,
+    });
+  }
+});
 
-const PORT = process.env.PORT || 3333
+const PORT = process.env.PORT || 3333;
 app.listen(PORT, () => {
-    console.log(`API rodando em http://localhost:${PORT}`)
-})
+  console.log(`API rodando em http://localhost:${PORT}`);
+});
